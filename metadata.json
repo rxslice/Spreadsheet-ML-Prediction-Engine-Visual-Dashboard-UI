@@ -1,0 +1,6 @@
+{
+  "name": "Forge Spreadsheet ML",
+  "description": "An interactive, in-browser spreadsheet editor that lets you parse datasets, configure neural network architectures, run training loops, and visualize model metrics and network structures in real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

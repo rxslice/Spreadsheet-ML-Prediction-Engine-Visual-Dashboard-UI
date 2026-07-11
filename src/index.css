@@ -1,0 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background-color: #050608;
+  color: #94a3b8;
+  font-family: var(--font-sans);
+  margin: 0;
+  height: 100vh;
+}
+
+/* Custom design classes matching the Immersive UI layout */
+.atmospheric-bg {
+  background: radial-gradient(circle at 50% 50%, #161821 0%, #050608 100%);
+}
+
+.glass-panel {
+  background: rgba(10, 12, 16, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.25);
+}
+
+.glow-purple {
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.25);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.25);
+}
