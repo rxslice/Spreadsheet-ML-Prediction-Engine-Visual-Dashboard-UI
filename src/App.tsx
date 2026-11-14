@@ -136,7 +136,9 @@ export default function App() {
   // Handle auto-rebuild model when column schema or spreadsheet row counts change
   useEffect(() => {
     resetModel();
-  }, [columnSchema, spreadsheetData.headers, spreadsheetData.rows.length]);
+    // Depend on the row data itself: an edited cell must rebuild the model,
+    // not only a change in the number of rows.
+  }, [columnSchema, spreadsheetData.headers, spreadsheetData.rows]);
 
   // Run a single training epoch step
   const executeTrainingEpoch = () => {
@@ -159,13 +161,17 @@ export default function App() {
     }
 
     let epochTrainLossSum = 0;
-    const batchSize = configRef.current.batchSize;
+    const batchSize = Math.max(1, Math.floor(configRef.current.batchSize) || 1);
 
-    // Execute backprop updates in mini-batches
-    for (let i = 0; i < numSamples; i++) {
-      const sampleIdx = indices[i];
-      const result = net.backprop(xtr[sampleIdx], ytr[sampleIdx], configRef.current.learningRate);
-      epochTrainLossSum += result.loss;
+    // Mini-batch gradient descent: one averaged update per batch
+    for (let start = 0; start < numSamples; start += batchSize) {
+      const batch = indices.slice(start, start + batchSize);
+      const result = net.trainBatch(
+        batch.map(i => xtr[i]),
+        batch.map(i => ytr[i]),
+        configRef.current.learningRate
+      );
+      epochTrainLossSum += result.loss * batch.length;
     }
 
     const averageTrainLoss = epochTrainLossSum / numSamples;
