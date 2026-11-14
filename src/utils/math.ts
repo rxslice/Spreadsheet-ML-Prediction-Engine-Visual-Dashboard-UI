@@ -133,7 +133,57 @@ export class NeuralNetwork {
     target: number[],
     learningRate: number
   ): { loss: number; output: number[] } {
-    const { zs, activations } = this.forward(x);
+    const { loss, output } = this.trainBatch([x], [target], learningRate);
+    return { loss, output: output[0] };
+  }
+
+  // One mini-batch step: average the gradients over the batch, then apply a
+  // single momentum update. Returns the mean loss and each sample's output.
+  trainBatch(
+    xs: number[][],
+    targets: number[][],
+    learningRate: number
+  ): { loss: number; output: number[][] } {
+    if (xs.length === 0) return { loss: 0, output: [] };
+    const gW = this.layers.map(l => l.weights.map(row => row.map(() => 0)));
+    const gB = this.layers.map(l => l.biases.map(() => 0));
+    let lossSum = 0;
+    const outputs: number[][] = [];
+    for (let s = 0; s < xs.length; s++) {
+      const { loss, output, deltas, activations } = this.gradients(xs[s], targets[s]);
+      lossSum += loss;
+      outputs.push(output);
+      for (let l = 0; l < this.layers.length; l++) {
+        for (let n = 0; n < this.layers[l].weights.length; n++) {
+          gB[l][n] += deltas[l][n];
+          for (let i = 0; i < this.layers[l].weights[n].length; i++) {
+            gW[l][n][i] += deltas[l][n] * activations[l][i];
+          }
+        }
+      }
+    }
+    const m = xs.length;
+    const beta = 0.9; // momentum coefficient
+    for (let l = 0; l < this.layers.length; l++) {
+      const layer = this.layers[l];
+      for (let n = 0; n < layer.weights.length; n++) {
+        layer.vBiases![n] = beta * layer.vBiases![n] + (1 - beta) * (gB[l][n] / m);
+        layer.biases[n] -= learningRate * layer.vBiases![n];
+        for (let i = 0; i < layer.weights[n].length; i++) {
+          layer.vWeights![n][i] = beta * layer.vWeights![n][i] + (1 - beta) * (gW[l][n][i] / m);
+          layer.weights[n][i] -= learningRate * layer.vWeights![n][i];
+        }
+      }
+    }
+    return { loss: lossSum / m, output: outputs };
+  }
+
+  // Loss and per-layer deltas for one sample; does not change any weights.
+  private gradients(
+    x: number[],
+    target: number[]
+  ): { loss: number; output: number[]; deltas: number[][]; activations: number[][] } {
+    const { activations } = this.forward(x);
     const output = activations[activations.length - 1];
 
     // Compute Loss
@@ -193,27 +243,7 @@ export class NeuralNetwork {
       deltas[l] = currentDeltas;
     }
 
-    // Update Weights and Biases (with simple momentum gradient descent)
-    const beta = 0.9; // momentum coefficient
-    for (let l = 0; l < this.layers.length; l++) {
-      const layer = this.layers[l];
-      const currentDeltas = deltas[l];
-      const prevLayerAct = activations[l]; // activations fed into l-th layer
-
-      for (let n = 0; n < layer.weights.length; n++) {
-        const dBias = currentDeltas[n];
-        layer.vBiases![n] = beta * layer.vBiases![n] + (1 - beta) * dBias;
-        layer.biases[n] -= learningRate * layer.vBiases![n];
-
-        for (let i = 0; i < layer.weights[n].length; i++) {
-          const dWeight = currentDeltas[n] * prevLayerAct[i];
-          layer.vWeights![n][i] = beta * layer.vWeights![n][i] + (1 - beta) * dWeight;
-          layer.weights[n][i] -= learningRate * layer.vWeights![n][i];
-        }
-      }
-    }
-
-    return { loss, output };
+    return { loss, output, deltas, activations };
   }
 
   // Calculate Relative Feature Importance using Garson's Algorithm
@@ -400,29 +430,37 @@ export function preprocessDataset(
     }
   });
 
-  // Calculate means and standard deviations for Z-score normalization of numeric features
+  // Train / Test Split (80% / 20%). Split BEFORE fitting any scaler so that
+  // test rows never influence the normalization statistics.
+  const indices = Array.from({ length: X.length }, (_, i) => i);
+  // Simple deterministic shuffle to keep results reproducible and stable
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = (i * 97) % indices.length;
+    const temp = indices[i];
+    indices[i] = indices[j];
+    indices[j] = temp;
+  }
+
+  const splitIdx = Math.min(X.length, Math.floor(X.length * 0.8) || 1);
+  const trainIndices = indices.slice(0, splitIdx);
+  const testIndices = indices.slice(splitIdx);
+
+  // Z-score statistics fitted on the training rows only
   const numProcessedFeatures = X[0].length;
   const means: number[] = new Array(numProcessedFeatures).fill(0);
   const stds: number[] = new Array(numProcessedFeatures).fill(0);
+  const nTrain = trainIndices.length;
 
-  // Compute means
   for (let c = 0; c < numProcessedFeatures; c++) {
     let sum = 0;
-    for (let r = 0; r < X.length; r++) {
-      sum += X[r][c];
-    }
-    means[c] = sum / X.length;
-  }
-
-  // Compute standard deviations
-  for (let c = 0; c < numProcessedFeatures; c++) {
+    for (const r of trainIndices) sum += X[r][c];
+    means[c] = sum / nTrain;
     let varianceSum = 0;
-    for (let r = 0; r < X.length; r++) {
+    for (const r of trainIndices) {
       const diff = X[r][c] - means[c];
       varianceSum += diff * diff;
     }
-    const variance = varianceSum / X.length;
-    stds[c] = Math.sqrt(variance) || 1; // prevent division by zero
+    stds[c] = Math.sqrt(varianceSum / nTrain) || 1; // prevent division by zero
   }
 
   // Check if we should normalize: keep categorical features unnormalized (already 0 or 1), normalize numeric
@@ -458,34 +496,18 @@ export function preprocessDataset(
 
   if (!isClassification) {
     let sum = 0;
-    for (let r = 0; r < y.length; r++) {
-      sum += y[r][0];
-    }
-    yMean = sum / y.length;
+    for (const r of trainIndices) sum += y[r][0];
+    yMean = sum / nTrain;
 
     let varianceSum = 0;
-    for (let r = 0; r < y.length; r++) {
+    for (const r of trainIndices) {
       const diff = y[r][0] - yMean;
       varianceSum += diff * diff;
     }
-    yStd = Math.sqrt(varianceSum / y.length) || 1;
+    yStd = Math.sqrt(varianceSum / nTrain) || 1;
 
     yNorm = y.map(val => [(val[0] - yMean) / yStd]);
   }
-
-  // Train / Test Split (80% / 20%)
-  const indices = Array.from({ length: X.length }, (_, i) => i);
-  // Simple deterministic shuffle to keep results reproducible and stable
-  for (let i = indices.length - 1; i > 0; i--) {
-    const j = (i * 97) % indices.length;
-    const temp = indices[i];
-    indices[i] = indices[j];
-    indices[j] = temp;
-  }
-
-  const splitIdx = Math.floor(X.length * 0.8) || 1;
-  const trainIndices = indices.slice(0, splitIdx);
-  const testIndices = indices.slice(splitIdx);
 
   const prep = {
     xtr: trainIndices.map(idx => XNorm[idx]),
